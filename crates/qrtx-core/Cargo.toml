@@ -1,0 +1,25 @@
+[package]
+name = "qrtx-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[dependencies]
+qrtx-protocol = { path = "../qrtx-protocol" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+uuid.workspace = true
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+cap-std = "=3.4.6"
+walkdir = "=2.5.0"
+fs2 = "=0.4.3"
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[target.'cfg(target_os = "android")'.dependencies]
+rustix = { version = "=1.1.4", features = ["fs"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+rustix = { version = "=1.1.4", features = ["fs"] }

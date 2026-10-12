@@ -1,0 +1,2 @@
+QR Transceiver
+Byte-perfect optical file transfer.

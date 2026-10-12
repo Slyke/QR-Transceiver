@@ -1,0 +1,35 @@
+[package]
+name = "qrtx-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[features]
+default = []
+camera = ["dep:nokhwa"]
+[dependencies]
+qrtx-core = { path = "../qrtx-core" }
+qrtx-protocol = { path = "../qrtx-protocol" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+sha2.workspace = true
+hex.workspace = true
+axum = "=0.8.9"
+tokio-stream = { version = "=0.1.19", features = ["sync"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["json","rustls-tls"] }
+json5 = "=0.4.1"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["json","env-filter"] }
+rmcp = { version = "=3.5.1", features = ["server","transport-io","transport-streamable-http-server","schemars"] }
+nokhwa = { version = "=0.10.11", optional = true, default-features = false, features = ["input-native","serialize"] }
+subtle = "=2.6.1"
+base64 = "=0.22.1"
+walkdir = "=2.5.0"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[build-dependencies]
+sha2.workspace = true

@@ -1,0 +1,12 @@
+{
+  "name": "qr-transceiver-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix desktop run dev",
+    "build": "npm --prefix desktop run build",
+    "check": "npm --prefix desktop run check",
+    "tauri": "npm --prefix desktop run tauri --",
+    "test": "node desktop/node_modules/@playwright/test/cli.js test --config playwright.config.ts",
+    "postinstall": "npm --prefix desktop ci"
+  }
+}

@@ -1,0 +1,23 @@
+[package]
+name = "qrtx-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+hex.workspace = true
+ciborium.workspace = true
+crc32c = "=0.6.8"
+base45 = "=3.2.0"
+ed25519-dalek = { version = "=2.2.0", features = ["rand_core"] }
+rand = "=0.8.8"
+qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
+rqrr = "=0.10.1"
+
+[dev-dependencies]
+serde_json.workspace = true
