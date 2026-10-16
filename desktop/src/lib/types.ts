@@ -73,6 +73,9 @@ export interface Job {
   last_frame: Frame | null;
   last_activity: number;
   error: string | null;
+  password_bundle: boolean;
+  password_needed: boolean;
+  bundle_files: FileEntry[];
 }
 export interface DisplayFrame {
   duration_ms: number;

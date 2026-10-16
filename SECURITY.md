@@ -1,6 +1,6 @@
 # Security
 
-QRTX transfers arbitrary bytes without opening or executing received files. It provides integrity, not confidentiality. Anyone able to record the QR sequence may reconstruct it.
+QRTX transfers arbitrary bytes without opening or executing received files. Ordinary transfers provide integrity, not confidentiality: anyone recording the QR sequence may reconstruct them. Optional [QRTXENC1 password bundles](docs/password-bundles.md) encrypt filenames and contents with Argon2id and AES-256-GCM. Outer file size and transport metadata remain visible. Passwords are never persisted; encrypted snapshots remain encrypted across display changes and source updates. As with ordinary transfers, source files, temporary outgoing snapshots and successfully decrypted outputs are local plaintext protected by the OS account.
 
 Checksums detect corruption; SHA-256 verifies reconstruction. Ed25519 receipts bind a transfer and session to a device key. Pair by independently comparing fingerprints. Unpaired receipts are labeled claims and cannot produce confirmed-delivery actions. Remote pause/resume/cancel require a paired key.
 

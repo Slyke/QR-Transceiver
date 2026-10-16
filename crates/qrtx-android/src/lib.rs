@@ -68,9 +68,12 @@ impl MobileEngine {
                 let mut transfers = Vec::new();
                 for job in self.engine.jobs()? {
                     let view = self.engine.inspect(job.id)?;
-                    let files: Vec<_> = job
-                        .manifest
-                        .files
+                    let entries = if job.status == "complete" && !job.bundle_files.is_empty() {
+                        &job.bundle_files
+                    } else {
+                        &job.manifest.files
+                    };
+                    let files: Vec<_> = entries
                         .iter()
                         .map(|entry| {
                             let progress = view.files.iter().find(|f| f.file == entry.id);
@@ -87,7 +90,8 @@ impl MobileEngine {
                     transfers.push(json!({
                         "id":job.id, "direction":job.direction, "status":job.status,
                         "files":files, "cycles":job.cycle, "frames":job.frames,
-                        "error":job.error, "bytesPerSecond":view.useful_bytes_per_second,
+                        "error":job.error, "passwordNeeded":job.password_needed,
+                        "passwordBundle":job.password_bundle, "bytesPerSecond":view.useful_bytes_per_second,
                         "etaSeconds":view.eta_seconds, "created":job.created
                     }));
                 }
@@ -143,9 +147,28 @@ impl MobileEngine {
                         "input must be an imported document"
                     );
                 }
+                let password = p
+                    .get("password")
+                    .filter(|v| !v.is_null())
+                    .map(|v| v.as_str().context("password must be a string"))
+                    .transpose()?;
                 Ok(
-                    json!({"id":self.engine.enqueue(paths, p["recursive"].as_bool().unwrap_or(false), None)?.id}),
+                    json!({"id":self.engine.enqueue_with_password(paths, p["recursive"].as_bool().unwrap_or(false), None, password)?.id}),
                 )
+            }
+            "receive_password" => {
+                let transfer = p
+                    .get("id")
+                    .filter(|v| !v.is_null())
+                    .map(|_| id())
+                    .transpose()?;
+                let password = p
+                    .get("password")
+                    .filter(|v| !v.is_null())
+                    .map(|v| v.as_str().context("password must be a string"))
+                    .transpose()?;
+                self.engine.set_receive_password(transfer, password)?;
+                Ok(json!({}))
             }
             "action" => {
                 let job = self.engine.job(id()?)?;
@@ -231,7 +254,12 @@ impl MobileEngine {
                     "Wait for the complete transfer before saving a folder"
                 );
                 let mut files = Vec::new();
-                for entry in view.job.manifest.files {
+                let entries = if view.job.bundle_files.is_empty() {
+                    view.job.manifest.files
+                } else {
+                    view.job.bundle_files
+                };
+                for entry in entries {
                     let path = if entry.directory {
                         Value::Null
                     } else {

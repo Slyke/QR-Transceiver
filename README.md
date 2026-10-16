@@ -42,6 +42,8 @@ The payload inspector supports byte offsets, missing-byte markers, UTF-8 and alt
 
 ## Local service and automation
 
+Optional [password encryption](./docs/password-bundles.md) packages files into one `transfer.qrtxenc` file inside unchanged QRTX/1. Enable **Encrypt new transfer with a password** before adding files; leave it off for the existing transfer method. Receivers can enter a password before scanning or retry after receipt without rescanning. Passwords are never saved.
+
 ```sh
 qrtransceiver serve --allow-root /absolute/outbox
 qrtransceiver send /absolute/outbox/example.bin

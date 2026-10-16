@@ -1452,3 +1452,7 @@ footer {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.password-entry { padding: 16px; display: grid; gap: 10px; }
+.password-entry label { display: grid; gap: 8px; }
+.password-entry label.inline { display: flex; align-items: center; }
+.password-panel { margin-bottom: 16px; padding: 16px; }

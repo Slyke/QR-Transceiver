@@ -2,6 +2,8 @@
 mod extras;
 mod inspect;
 pub mod model;
+pub mod password;
+mod password_receive;
 mod receive;
 mod send;
 use anyhow::{Context, Result, ensure};
@@ -24,6 +26,9 @@ pub struct Engine {
     pub(crate) identity: Identity,
     _lock: File,
     pub(crate) ticks: u64,
+    // Ephemeral only: never part of Job, Profile, settings, events or logs.
+    pub(crate) receive_password: Option<zeroize::Zeroizing<String>>,
+    pub(crate) transfer_passwords: std::collections::HashMap<Uuid, zeroize::Zeroizing<String>>,
 }
 impl Engine {
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
@@ -94,6 +99,8 @@ impl Engine {
             identity,
             _lock: lock,
             ticks: 0,
+            receive_password: None,
+            transfer_passwords: Default::default(),
         };
         engine.recover()?;
         Ok(engine)
@@ -176,6 +183,10 @@ impl Engine {
             "cancel" => j.status = "cancelled".into(),
             "restart" => {
                 ensure!(j.direction == "send", "only sending jobs can restart");
+                ensure!(
+                    !j.password_bundle,
+                    "add files with a password again to create a new encrypted bundle; resume reuses this bundle"
+                );
                 let replacement =
                     self.enqueue(j.source_paths.clone(), j.recursive, Some(j.profile.clone()))?;
                 j.status = "superseded".into();
@@ -212,6 +223,7 @@ impl Engine {
                 )?;
                 tx.execute("DELETE FROM jobs WHERE id=?1", [id.to_string()])?;
                 tx.commit()?;
+                self.transfer_passwords.remove(&id);
                 return Ok(());
             }
             _ => anyhow::bail!("unknown transfer action"),

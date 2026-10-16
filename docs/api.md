@@ -14,7 +14,9 @@ Devices returns cameras and displays; display metadata is populated when the des
 
 Methods: status, devices, transfers, transfer, history, received, enqueue, action, receive_start, receive_stop, next_frame, ingest, payload, coverage, digest, search, missing, profiles, save_profile, select_profile, set_profile, camera, camera_control, destination, automation, automation_config, automation_save, events.
 
-`action` accepts pause, resume, cancel, restart, priority and remove. Restart snapshots the current source under a new transfer/session identity. Remove requires a non-active job and frees its snapshots/staging; committed received files remain intact. Payload reads are at most 64 KiB and carry null values for unavailable bytes. Events accept an after cursor and a limit up to 1000.
+`action` accepts pause, resume, cancel, restart, priority and remove. Restart snapshots the current source under a new transfer/session identity. Encrypted jobs instead require a new `enqueue` with a password; resume reuses their existing envelope. Remove requires a non-active job and frees its snapshots/staging; committed received files remain intact. Payload reads are at most 64 KiB and carry null values for unavailable bytes. Events accept an after cursor and a limit up to 1000.
+
+`enqueue` optionally accepts `password` for QRTXENC1 encryption. Omit it or pass `null` for the default ordinary transfer. `receive_password` takes a string password (or `null` to clear it) and an optional transfer `id`, requires `receive` scope, and can run before scanning or retry a locked bundle. See [password bundle format and API details](password-bundles.md).
 
 Optional HTTP: `qrtransceiver serve --http 38475`. Every /v1 route requires `Authorization: Bearer TOKEN`. Browser Origin headers are rejected; CORS is not enabled. It listens on 127.0.0.1. Liveness/readiness are /livez and /readyz. No external binding is implemented.
 

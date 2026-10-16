@@ -38,6 +38,27 @@ impl Engine {
                 received_set_digest: None,
             });
         }
+        if j.status == "complete" {
+            for f in &j.bundle_files {
+                let path = self
+                    .db
+                    .query_row(
+                        "SELECT path FROM outputs WHERE job=?1 AND file=?2",
+                        params![id.to_string(), f.id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                files.push(FileProgress {
+                    file: f.id,
+                    received_chunks: 0,
+                    total_chunks: 0,
+                    received_bytes: f.size,
+                    verified: true,
+                    path,
+                    received_set_digest: None,
+                });
+            }
+        }
         let data: u64 = j.manifest.files.iter().map(|f| f.chunks as u64).sum();
         let mf = pack(&j.manifest)?
             .len()
@@ -81,6 +102,7 @@ impl Engine {
             .manifest
             .files
             .iter()
+            .chain(j.bundle_files.iter().filter(|_| j.status == "complete"))
             .find(|f| f.id == file && !f.directory)
             .context("unknown payload file")?;
         ensure!(offset <= f.size, "offset exceeds file");
@@ -106,13 +128,16 @@ impl Engine {
             offset,
             size: f.size,
             bytes,
-            verified: j.delivered_files.contains(&file),
+            verified: j.delivered_files.contains(&file)
+                || (j.status == "complete" && j.bundle_files.iter().any(|f| f.id == file)),
             ranges,
         })
     }
     pub fn coverage(&self, id: Uuid, file: u32, start: u64, end: u64) -> Result<Vec<(u64, u64)>> {
         let j = self.job(id)?;
-        if j.direction == "send" {
+        if j.direction == "send"
+            || (j.status == "complete" && j.bundle_files.iter().any(|f| f.id == file))
+        {
             return Ok(vec![(start, end)]);
         }
         let mut s=self.db.prepare("SELECT offset,length FROM chunks WHERE job=?1 AND file=?2 AND offset<?4 AND offset+length>=?3 ORDER BY idx")?;

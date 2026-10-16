@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
@@ -73,7 +74,7 @@ fun TransferDetails(transfer: Transfer, model: TransferViewModel, onBack: () -> 
                 }
                 TextButton(onClick = { confirmRemove = true }) { Text("Remove") }
             }
-            if (transfer.direction == "send" && transfer.status != "active") {
+            if (transfer.direction == "send" && transfer.status != "active" && !transfer.passwordBundle) {
                 TextButton(onClick = { model.action(transfer.id, "restart") }) { Text("Restart") }
             }
         }
@@ -100,6 +101,25 @@ fun TransferDetails(transfer: Transfer, model: TransferViewModel, onBack: () -> 
             }
         }
         if (transfer.files.all { it.directory }) Text("This transfer contains only empty folders.")
+    }
+}
+
+@Composable
+fun ReceivePasswordInput(model: TransferViewModel, id: String? = null, enabled: Boolean = true) {
+    // Deliberately remember, not rememberSaveable: passwords never enter saved state.
+    var password by remember(id) { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(value = password, onValueChange = { password = it },
+            label = { Text(if (id == null) "Receive password (optional)" else "Transfer password") },
+            visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            singleLine = true, enabled = enabled, modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { model.receivePassword(id, password); password = "" }, enabled = enabled && password.isNotEmpty()) {
+                Text(if (id == null) "Use password" else "Unlock transfer")
+            }
+            if (id == null) TextButton(onClick = { password = ""; model.receivePassword(null, null) }, enabled = enabled) { Text("Clear") }
+        }
+        Text(if (id == null) "Enter before scanning or when a bundle arrives. Passwords are never saved." else "Scanning continues. Retry without rescanning.", style = MaterialTheme.typography.bodySmall)
     }
 }
 

@@ -9,6 +9,19 @@ impl Engine {
         recursive: bool,
         profile: Option<Profile>,
     ) -> Result<Job> {
+        self.enqueue_with_password(paths, recursive, profile, None)
+    }
+
+    pub fn enqueue_with_password(
+        &mut self,
+        paths: Vec<PathBuf>,
+        recursive: bool,
+        profile: Option<Profile>,
+        password: Option<&str>,
+    ) -> Result<Job> {
+        if let Some(password) = password {
+            password::validate_password(password)?;
+        }
         ensure!(
             !paths.is_empty() && paths.len() <= MAX_FILES,
             "select 1–4096 inputs"
@@ -18,81 +31,144 @@ impl Engine {
         let id = Uuid::new_v4();
         let spool = self.root.join("spool").join(id.to_string());
         fs::create_dir(&spool)?;
-        let mut files = Vec::new();
-        for source in &paths {
-            ensure!(
-                !fs::symlink_metadata(source)?.file_type().is_symlink(),
-                "source symlinks are disabled"
-            );
-            let source = source.canonicalize()?;
-            ensure!(
-                !source.is_dir() || !self.root.starts_with(&source),
-                "outgoing directory contains application state; choose a separate outgoing directory"
-            );
-            let base = source.parent().context("cannot send filesystem root")?;
-            if source.is_dir() {
-                let depth = if recursive { usize::MAX } else { 1 };
-                for entry in WalkDir::new(&source)
-                    .follow_links(false)
-                    .max_depth(depth)
-                    .sort_by_file_name()
-                {
-                    let entry = entry?;
-                    if entry.file_type().is_symlink() {
-                        continue;
+        // Drop all unfinished snapshots, including plaintext, on any enqueue failure.
+        let result = (|| -> Result<Job> {
+            let mut files = Vec::new();
+            for source in &paths {
+                ensure!(
+                    !fs::symlink_metadata(source)?.file_type().is_symlink(),
+                    "source symlinks are disabled"
+                );
+                let source = source.canonicalize()?;
+                ensure!(
+                    !source.is_dir() || !self.root.starts_with(&source),
+                    "outgoing directory contains application state; choose a separate outgoing directory"
+                );
+                let base = source.parent().context("cannot send filesystem root")?;
+                if source.is_dir() {
+                    let depth = if recursive { usize::MAX } else { 1 };
+                    for entry in WalkDir::new(&source)
+                        .follow_links(false)
+                        .max_depth(depth)
+                        .sort_by_file_name()
+                    {
+                        let entry = entry?;
+                        if entry.file_type().is_symlink() {
+                            continue;
+                        }
+                        if entry.file_type().is_file()
+                            || (password.is_none() && entry.file_type().is_dir())
+                        {
+                            if password.is_some() {
+                                check_bundle_size(entry.path(), base, &files)?;
+                            }
+                            snapshot(entry.path(), base, &spool, &mut files, profile.chunk_size)?;
+                        }
                     }
-                    if entry.file_type().is_dir() || entry.file_type().is_file() {
-                        snapshot(entry.path(), base, &spool, &mut files, profile.chunk_size)?;
+                } else {
+                    if password.is_some() {
+                        check_bundle_size(&source, base, &files)?;
                     }
+                    snapshot(&source, base, &spool, &mut files, profile.chunk_size)?;
                 }
-            } else {
-                snapshot(&source, base, &spool, &mut files, profile.chunk_size)?;
             }
+            if let Some(password) = password {
+                let mut bundle = password::BundleBuilder::new();
+                for entry in &files {
+                    bundle.push(
+                        &entry.path,
+                        entry.size,
+                        File::open(spool.join(entry.id.to_string()))?,
+                    )?;
+                }
+                let envelope = bundle.encrypt(password)?;
+                for entry in &files {
+                    fs::remove_file(spool.join(entry.id.to_string()))?;
+                }
+                let mut output = File::create(spool.join("1"))?;
+                output.write_all(&envelope)?;
+                output.sync_all()?;
+                files = vec![FileEntry {
+                    id: 1,
+                    path: password::FILENAME.into(),
+                    size: envelope.len() as u64,
+                    sha256: hash(&envelope),
+                    chunks: (envelope.len() as u64).div_ceil(profile.chunk_size as u64) as u32,
+                    directory: false,
+                }];
+            }
+            let manifest = Manifest {
+                version: 1,
+                transfer: id,
+                chunk_size: profile.chunk_size,
+                files,
+            };
+            manifest.validate()?;
+            let mut password_bundle = password_receive::validate_password_manifest(&manifest)?;
+            for entry in manifest
+                .files
+                .iter()
+                .filter(|e| !e.directory && e.size >= 8)
+            {
+                let mut prefix = [0; 8];
+                File::open(spool.join(entry.id.to_string()))?.read_exact(&mut prefix)?;
+                if &prefix == password::MAGIC {
+                    ensure!(
+                        manifest.files.len() == 1,
+                        "password bundles cannot be mixed with other outer files"
+                    );
+                    ensure!(
+                        entry.size <= password::MAX_ENVELOPE as u64,
+                        "encrypted envelope exceeds 256,000,000 bytes"
+                    );
+                    password_bundle = true;
+                }
+            }
+            let bytes = pack(&manifest)?;
+            ensure!(bytes.len() <= MAX_MANIFEST, "manifest exceeds limit");
+            let manifest_hash = hash(&bytes);
+            let mut f = File::create(spool.join("manifest"))?;
+            f.write_all(&bytes)?;
+            f.sync_all()?;
+            let j = Job {
+                id,
+                session: Uuid::new_v4(),
+                direction: "send".into(),
+                status: "active".into(),
+                priority: 0,
+                created: now(),
+                manifest,
+                manifest_hash,
+                profile,
+                source_paths: paths,
+                recursive,
+                password_bundle,
+                password_needed: false,
+                bundle_files: vec![],
+                cycle: 0,
+                frames: 0,
+                bytes: 0,
+                cursor_file: 0,
+                cursor_chunk: 0,
+                manifest_cursor: 0,
+                since_manifest: 0,
+                delivered_files: vec![],
+                confirmed_files: vec![],
+                duplicates: 0,
+                rejected: 0,
+                last_frame: None,
+                last_activity: now(),
+                error: None,
+            };
+            self.store_setting(&format!("sources:{}", j.id), &self.source_stamp(&j)?)?;
+            self.emit("transfer.queued", &j, None, serde_json::json!({}), None)?;
+            self.save(&j)?;
+            Ok(j)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&spool);
         }
-        let manifest = Manifest {
-            version: 1,
-            transfer: id,
-            chunk_size: profile.chunk_size,
-            files,
-        };
-        manifest.validate()?;
-        let bytes = pack(&manifest)?;
-        ensure!(bytes.len() <= MAX_MANIFEST, "manifest exceeds limit");
-        let manifest_hash = hash(&bytes);
-        let mut f = File::create(spool.join("manifest"))?;
-        f.write_all(&bytes)?;
-        f.sync_all()?;
-        let j = Job {
-            id,
-            session: Uuid::new_v4(),
-            direction: "send".into(),
-            status: "active".into(),
-            priority: 0,
-            created: now(),
-            manifest,
-            manifest_hash,
-            profile,
-            source_paths: paths,
-            recursive,
-            cycle: 0,
-            frames: 0,
-            bytes: 0,
-            cursor_file: 0,
-            cursor_chunk: 0,
-            manifest_cursor: 0,
-            since_manifest: 0,
-            delivered_files: vec![],
-            confirmed_files: vec![],
-            duplicates: 0,
-            rejected: 0,
-            last_frame: None,
-            last_activity: now(),
-            error: None,
-        };
-        self.save(&j)?;
-        self.store_setting(&format!("sources:{}", j.id), &self.source_stamp(&j)?)?;
-        self.emit("transfer.queued", &j, None, serde_json::json!({}), None)?;
-        Ok(j)
+        result
     }
 
     /// Presentation settings may change without modifying a transfer's wire layout or identity.
@@ -541,6 +617,24 @@ impl Engine {
         self.save(&j)
     }
 }
+fn check_bundle_size(source: &Path, base: &Path, files: &[FileEntry]) -> Result<()> {
+    let size = fs::metadata(source)?.len();
+    let name = source
+        .strip_prefix(base)?
+        .to_str()
+        .context("filename is not valid Unicode")?;
+    let used: u64 = files
+        .iter()
+        .map(|f| 12 + f.path.len() as u64 + f.size)
+        .sum();
+    ensure!(
+        size.checked_add(used)
+            .and_then(|n| n.checked_add(36 + 16 + 12 + 12 + name.len() as u64))
+            .is_some_and(|n| n <= password::MAX_ENVELOPE as u64),
+        "encrypted envelope exceeds 256,000,000 bytes"
+    );
+    Ok(())
+}
 fn snapshot(
     source: &Path,
     base: &Path,
@@ -567,7 +661,7 @@ fn snapshot(
         hash(&[])
     } else {
         ensure!(meta.len() <= MAX_FILE_SIZE, "file exceeds size limit");
-        let mut src = File::open(source)?;
+        let mut src = File::open(source)?.take(meta.len() + 1);
         let mut dest = OpenOptions::new()
             .create_new(true)
             .write(true)

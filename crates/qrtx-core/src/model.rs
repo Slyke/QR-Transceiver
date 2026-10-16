@@ -179,6 +179,13 @@ pub struct Job {
     pub source_paths: Vec<PathBuf>,
     #[serde(default)]
     pub recursive: bool,
+    #[serde(default)]
+    pub password_bundle: bool,
+    #[serde(default)]
+    pub password_needed: bool,
+    /// Authenticated inner entries. Local IDs never collide with an outer file ID.
+    #[serde(default)]
+    pub bundle_files: Vec<qrtx_protocol::FileEntry>,
     pub cycle: u64,
     pub frames: u64,
     pub bytes: u64,

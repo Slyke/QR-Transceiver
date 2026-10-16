@@ -9,6 +9,66 @@ fn call(e: &mut MobileEngine, method: &str, p: Value) -> Value {
 }
 
 #[test]
+fn password_bundle_exports_validated_inner_files_and_keeps_scanning_on_retry() {
+    let temp = TempDir::new().unwrap();
+    let mut phone = MobileEngine::open(&temp.path().join("phone/engine")).unwrap();
+    let mut peer = MobileEngine::open(&temp.path().join("peer/engine")).unwrap();
+    let inputs = temp.path().join("phone/imports/batch");
+    fs::create_dir_all(&inputs).unwrap();
+    let source = inputs.join("example.cqs.json.gz");
+    fs::write(&source, [0x1f, 0x8b, 0, 255]).unwrap();
+    let job = call(
+        &mut phone,
+        "enqueue",
+        json!({"paths":[source],"password":" mobile 🔒 "}),
+    );
+    for _ in 0..20 {
+        let frame = call(&mut phone, "next_frame", json!({}));
+        if let Some(text) = frame["text"].as_str() {
+            assert_eq!(peer.scan(vec![text.into()])["rejected"], 0);
+        }
+        if call(&mut peer, "status", json!({}))["transfers"][0]["status"] == "locked" {
+            break;
+        }
+    }
+    assert_eq!(
+        call(&mut peer, "status", json!({}))["transfers"][0]["passwordNeeded"],
+        true
+    );
+    assert!(
+        peer.dispatch("export", json!({"id":job["id"],"file":1}))
+            .is_err()
+    );
+    assert!(
+        peer.dispatch(
+            "receive_password",
+            json!({"id":job["id"],"password":"wrong"})
+        )
+        .is_err()
+    );
+    call(
+        &mut peer,
+        "receive_password",
+        json!({"id":job["id"],"password":" mobile 🔒 "}),
+    );
+    let status = call(&mut peer, "status", json!({}));
+    assert_eq!(
+        status["transfers"][0]["files"][0]["name"],
+        "example.cqs.json.gz"
+    );
+    let exported = call(&mut peer, "export_batch", json!({"id":job["id"]}));
+    assert_eq!(exported.as_array().unwrap().len(), 1);
+    assert_eq!(
+        fs::read(exported[0]["path"].as_str().unwrap()).unwrap(),
+        [0x1f, 0x8b, 0, 255]
+    );
+    assert!(
+        peer.dispatch("export", json!({"id":job["id"],"file":1}))
+            .is_err()
+    );
+}
+
+#[test]
 fn android_sends_to_desktop_and_authenticates_receipts_after_restart() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("phone/engine");

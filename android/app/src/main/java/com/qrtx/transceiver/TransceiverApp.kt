@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +29,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -123,6 +126,12 @@ fun TransceiverApp(state: AppState, model: TransferViewModel) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(state.busyLabel, Modifier.padding(horizontal = 16.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
                 }
+                state.transfers.filter { it.passwordNeeded && it.status in listOf("active", "locked") }.forEach { transfer ->
+                    SectionCard("Encrypted transfer · ${transfer.id.take(8)}", "Enter its password while scanning continues.") {
+                        ReceivePasswordInput(model, transfer.id, !state.busy)
+                        transfer.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    }
+                }
                 when {
                     selected != null -> TransferDetails(selected, model, onBack = { selectedId = null }, onExportFolder = { exportJob = selected.id; saveFolder.launch(null) }, onExport = { file ->
                         exportJob = selected.id; exportFile = file.id; save.launch(file.name.substringAfterLast('/'))
@@ -145,9 +154,20 @@ fun TransceiverApp(state: AppState, model: TransferViewModel) {
                         }
                         if (state.settings.mode != "receive") {
                             SectionCard("Send through your screen", "${state.transfers.count { it.direction == "send" && it.status == "active" }} in the queue") {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = state.encryptSend, onCheckedChange = model::encryptSend, enabled = !state.busy)
+                                    Text("Encrypt new transfer with a password")
+                                }
+                                if (state.encryptSend) {
+                                    OutlinedTextField(value = state.sendPassword, onValueChange = model::sendPassword,
+                                        label = { Text("Send password") }, visualTransformation = PasswordVisualTransformation(),
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), singleLine = true,
+                                        enabled = !state.busy, modifier = Modifier.fillMaxWidth())
+                                    Text("Enter a password, then add files. Empty folders are omitted.", style = MaterialTheme.typography.bodySmall)
+                                }
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { files.launch(arrayOf("*/*")) }, enabled = !state.busy) { Text("Add files") }
-                                    OutlinedButton(onClick = { folder.launch(null) }, enabled = !state.busy) { Text("Add folder") }
+                                    Button(onClick = { files.launch(arrayOf("*/*")) }, enabled = !state.busy && (!state.encryptSend || state.sendPassword.isNotEmpty())) { Text("Add files") }
+                                    OutlinedButton(onClick = { folder.launch(null) }, enabled = !state.busy && (!state.encryptSend || state.sendPassword.isNotEmpty())) { Text("Add folder") }
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = { model.display(!state.displaying) }) { Text(if (state.displaying) "Pause display" else "Start display") }
@@ -162,6 +182,7 @@ fun TransceiverApp(state: AppState, model: TransferViewModel) {
                         }
                         if (state.settings.mode != "send") {
                             SectionCard("Receive with your camera", if (state.frontCamera) "Front camera · useful for two-way transfers" else "Rear camera · tap preview to focus") {
+                                ReceivePasswordInput(model, enabled = !state.busy)
                                 if (state.scanning) CameraPreview(
                                     front = state.frontCamera, modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f),
                                     onFrame = model::analyze, onError = model::cameraError

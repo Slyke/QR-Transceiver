@@ -110,6 +110,7 @@ impl Engine {
         ensure!(hash(&bytes) == digest, "manifest integrity failure");
         let manifest: Manifest = unpack(&bytes)?;
         manifest.validate()?;
+        let password_bundle = password_receive::validate_password_manifest(&manifest)?;
         ensure!(
             manifest.transfer == f.transfer,
             "manifest transfer mismatch"
@@ -150,6 +151,9 @@ impl Engine {
             profile,
             source_paths: vec![],
             recursive: false,
+            password_bundle,
+            password_needed: password_bundle && self.password_for(f.transfer).is_none(),
+            bundle_files: vec![],
             cycle: 0,
             frames: 0,
             bytes: 0,
@@ -195,7 +199,7 @@ impl Engine {
             "data targets different session"
         );
         ensure!(
-            j.status == "active" || j.status == "complete",
+            matches!(j.status.as_str(), "active" | "complete" | "locked"),
             "transfer is not accepting data"
         );
         let entry = j
@@ -263,7 +267,25 @@ impl Engine {
         }
         self.finish_ready_files(j)
     }
-    fn finish_ready_files(&mut self, mut j: Job) -> Result<()> {
+    pub(crate) fn finish_ready_files(&mut self, mut j: Job) -> Result<()> {
+        if j.status == "locked" && j.password_needed {
+            return Ok(());
+        }
+        if j.status == "complete" {
+            return self.completion_controls(&j);
+        }
+        // Every outer file must be classified from verified bytes before any
+        // promotion, including ordinary files beside a renamed envelope.
+        let chunks: u64 = self.db.query_row(
+            "SELECT COUNT(*) FROM chunks WHERE job=?1",
+            [j.id.to_string()],
+            |r| r.get(0),
+        )?;
+        let expected: u64 = j.manifest.files.iter().map(|f| u64::from(f.chunks)).sum();
+        if chunks != expected {
+            return Ok(());
+        }
+        let mut ready = Vec::new();
         for entry in j.manifest.files.clone() {
             if j.delivered_files.contains(&entry.id) {
                 continue;
@@ -296,6 +318,21 @@ impl Engine {
                     self.save(&j)?;
                     anyhow::bail!("file SHA-256 mismatch; chunks cleared for retransmission");
                 }
+            }
+            ready.push(entry);
+        }
+        if let Err(error) = self.check_password_outer(&mut j) {
+            j.status = "failed".into();
+            j.error = Some(error.to_string());
+            self.save(&j)?;
+            return Err(error);
+        }
+        for entry in ready {
+            if j.password_bundle {
+                if !self.finish_password_bundle(&mut j, &entry)? {
+                    return Ok(());
+                }
+                continue;
             }
             let target = self.commit_file(&j, &entry)?;
             // File promotion can precede SQLite; the persisted intent makes that gap recoverable.
@@ -361,7 +398,7 @@ impl Engine {
         }
         Ok(())
     }
-    fn commit_file(&self, j: &Job, entry: &FileEntry) -> Result<String> {
+    pub(crate) fn commit_file(&self, j: &Job, entry: &FileEntry) -> Result<String> {
         let dir = Dir::open_ambient_dir(&j.profile.destination, ambient_authority())?;
         let relative = if j.profile.preserve_paths {
             entry.path.clone()
@@ -586,6 +623,14 @@ impl Engine {
             }
             let mut verified = Vec::new();
             for id in &j.delivered_files {
+                if j.password_bundle {
+                    if self.bundle_outputs_valid(&j)? {
+                        verified.push(*id);
+                    } else {
+                        j.status = "active".into();
+                    }
+                    continue;
+                }
                 let entry = j
                     .manifest
                     .files
@@ -619,6 +664,9 @@ impl Engine {
                 }
             }
             j.delivered_files = verified;
+            if j.password_bundle && j.status != "complete" {
+                j.password_needed = true;
+            }
             j.bytes = self.db.query_row(
                 "SELECT COALESCE(SUM(length),0) FROM chunks WHERE job=?1",
                 [j.id.to_string()],
@@ -629,7 +677,7 @@ impl Engine {
                 [format!("{}:%", j.id)],
             )?;
             self.save(&j)?;
-            if j.status != "cancelled" && j.status != "paused" {
+            if !matches!(j.status.as_str(), "cancelled" | "paused" | "failed") {
                 self.finish_ready_files(j)?;
             }
         }

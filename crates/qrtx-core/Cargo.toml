@@ -15,6 +15,10 @@ rusqlite = { version = "=0.37.0", features = ["bundled"] }
 cap-std = "=3.4.6"
 walkdir = "=2.5.0"
 fs2 = "=0.4.3"
+aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
+argon2 = { version = "=0.5.3", features = ["zeroize"] }
+rand = "=0.8.8"
+zeroize = "=1.9.1"
 [dev-dependencies]
 tempfile = "=3.27.0"
 

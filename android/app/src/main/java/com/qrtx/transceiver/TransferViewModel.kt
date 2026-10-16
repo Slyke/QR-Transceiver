@@ -82,6 +82,17 @@ class TransferViewModel(application: Application) : AndroidViewModel(application
     fun switchCamera() { mutableState.update { it.copy(frontCamera = !it.frontCamera) } }
     fun clearError() { mutableState.update { it.copy(error = null) } }
     fun clearMessage() { mutableState.update { it.copy(message = null) } }
+    fun encryptSend(value: Boolean) { mutableState.update { it.copy(encryptSend = value, sendPassword = "") } }
+    fun sendPassword(value: String) { mutableState.update { it.copy(sendPassword = value) } }
+    fun receivePassword(id: String?, password: String?) {
+        task("Updating receive password…") {
+            try {
+                call("receive_password", JSONObject().put("id", id ?: JSONObject.NULL)
+                    .put("password", password ?: JSONObject.NULL))
+                mutableState.update { it.copy(message = if (password == null) "Receive password cleared." else "Password applied. Scanning can continue.") }
+            } finally { refresh() }
+        }
+    }
     fun cameraError(message: String) { mutableState.update { it.copy(scanning = false, error = message) } }
 
     fun analyze(bytes: ByteArray, width: Int, height: Int) {
@@ -119,11 +130,15 @@ class TransferViewModel(application: Application) : AndroidViewModel(application
     }
     private suspend fun enqueue(files: List<File>, recursive: Boolean) {
         try {
-            call("enqueue", JSONObject().put("paths", JSONArray(files.map { it.absolutePath })).put("recursive", recursive))
+            val params = JSONObject().put("paths", JSONArray(files.map { it.absolutePath })).put("recursive", recursive)
+            if (state.value.encryptSend) params.put("password", state.value.sendPassword)
+            call("enqueue", params)
             mutableState.update { it.copy(message = "Added to the transfer queue. Start the display when ready.") }
         } catch (error: Throwable) {
             withContext(Dispatchers.IO) { documents.discard(files) }
             throw error
+        } finally {
+            mutableState.update { it.copy(sendPassword = "") }
         }
     }
     fun configure(settings: TransferSettings) {

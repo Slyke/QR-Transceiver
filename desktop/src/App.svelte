@@ -10,6 +10,7 @@
   import HexViewer from './lib/HexViewer.svelte';
   import Settings from './lib/Settings.svelte';
   import SendControls from './lib/SendControls.svelte';
+  import ReceivePassword from './lib/ReceivePassword.svelte';
   import SectionOrder from './lib/SectionOrder.svelte';
   import { createSectionOrder } from './lib/section-order.svelte';
   import Automation from './lib/Automation.svelte';
@@ -39,6 +40,8 @@
   let error = $state('');
   let path = $state('');
   let recursive = $state(true);
+  let encrypt = $state(false);
+  let sendPassword = $state('');
   let busy = $state(false);
   let theme = $state('dark');
   let revision = $state(0);
@@ -134,7 +137,11 @@
   const enqueue = async ({ paths, directory = false }: { paths: string[]; directory?: boolean }) => {
     busy = true;
     try {
-      const job = await rpc<Job>({ method: 'enqueue', params: { paths, recursive: directory && recursive } });
+      const job = await rpc<Job>({
+        method: 'enqueue',
+        params: { paths, recursive: directory && recursive, ...(encrypt ? { password: sendPassword } : {}) }
+      });
+      sendPassword = '';
       await refresh();
       choose({ job });
       path = '';
@@ -398,6 +405,13 @@
               >
             </div>
           </div>
+          {#each receiving.filter((job) => job.password_needed && ['active', 'locked'].includes(job.status)) as job (job.id)}
+            <section class="panel password-panel">
+              <p>Encrypted transfer · {job.id.slice(0, 8)}{job.status === 'locked' ? ' · Ready to unlock' : ' · Receiving'}</p>
+              <ReceivePassword id={job.id} {refresh} {report} />
+              {#if job.error}<p class="error">{job.error}</p>{/if}
+            </section>
+          {/each}
           {#snippet outgoingPanel()}
             <section data-section="outgoing" class="panel transport-panel">
               <div class="panel-heading">
@@ -477,6 +491,7 @@
                 ><span class="muted">{status?.profile.camera_width ?? 1280} × {status?.profile.camera_height ?? 720}</span>
               </div>
               <p class="footnote">{t('qrtx-download_verified')}</p>
+              <ReceivePassword {refresh} {report} />
             </section>
           {/snippet}
           {#snippet queuePanel()}
@@ -490,11 +505,30 @@
                   move={(direction) => moveSection({ id: 'queue', direction })}
                 />
                 <div class="button-group">
-                  <button disabled={busy} onclick={() => void run(() => selectFiles({ directory: false }))}>+ {t('qrtx-add_files')}</button
-                  ><button disabled={busy} onclick={() => void run(() => selectFiles({ directory: true }))}
-                    >+ {t('qrtx-add_directory')}</button
+                  <button
+                    disabled={busy || (encrypt && !sendPassword.length)}
+                    onclick={() => void run(() => selectFiles({ directory: false }))}>+ {t('qrtx-add_files')}</button
+                  ><button
+                    disabled={busy || (encrypt && !sendPassword.length)}
+                    onclick={() => void run(() => selectFiles({ directory: true }))}>+ {t('qrtx-add_directory')}</button
                   >
                 </div>
+              </div>
+              <div class="password-entry">
+                <label class="inline"
+                  ><input
+                    type="checkbox"
+                    bind:checked={encrypt}
+                    onchange={() => {
+                      sendPassword = '';
+                    }}
+                  />Encrypt new transfer with a password</label
+                >
+                {#if encrypt}
+                  <label>Send password<input type="password" autocomplete="new-password" bind:value={sendPassword} disabled={busy} /></label
+                  >
+                  <p class="footnote">Enter a password, then add files. The receiver needs the same password. Empty folders are omitted.</p>
+                {/if}
               </div>
               <div class="path-entry">
                 <input
@@ -502,7 +536,9 @@
                   aria-label="File or directory path"
                   bind:value={path}
                   placeholder="Local file or directory path…"
-                /><button disabled={busy || !path.trim()} onclick={() => void run(() => enqueue({ paths: [path], directory: true }))}
+                /><button
+                  disabled={busy || !path.trim() || (encrypt && !sendPassword.length)}
+                  onclick={() => void run(() => enqueue({ paths: [path], directory: true }))}
                   >{busy ? 'Snapshotting…' : t('qrtx-enqueue')}</button
                 ><label class="inline"><input type="checkbox" bind:checked={recursive} />{t('qrtx-recursive')}</label>
               </div>
@@ -544,7 +580,7 @@
                                 aria-label="Lower transfer priority"
                                 onclick={() => void run(() => jobAction({ id: job.id, action: 'priority', priority: job.priority - 1 }))}
                                 >↓</button
-                              >{#if job.direction === 'send'}<button
+                              >{#if job.direction === 'send' && !job.password_bundle}<button
                                   aria-label="Restart transfer"
                                   onclick={() => void run(() => jobAction({ id: job.id, action: 'restart' }))}>↻</button
                                 >{/if}{#if job.status !== 'active'}<button
@@ -580,6 +616,16 @@
                   >{:else}<span class="muted">HEX / UTF-8</span>{/if}
               </div>
               {#if activeJob && activeFile}
+                {#if activeJob.status === 'complete' && activeJob.bundle_files?.length}
+                  <div class="password-entry">
+                    <strong>Decrypted and verified files</strong>
+                    {#each activeJob.bundle_files as file}
+                      <p>
+                        {file.path} · {bytes({ value: file.size })}<br /><code>{view?.files.find((f) => f.file === file.id)?.path}</code>
+                      </p>
+                    {/each}
+                  </div>
+                {/if}
                 {#key activeJob.id + ':' + activeFile.id}<HexViewer job={activeJob} file={activeFile} {revision} />{/key}
                 <div class="integrity-grid">
                   <div>

@@ -76,7 +76,9 @@ impl Runtime {
     pub fn dispatch(&self, method: &str, p: Value, scopes: Option<&[String]>) -> Result<Value> {
         let permission = match method {
             "enqueue" => "send",
-            "receive_start" | "receive_stop" | "ingest" | "missing" => "receive",
+            "receive_start" | "receive_stop" | "ingest" | "missing" | "receive_password" => {
+                "receive"
+            }
             "destination" | "camera_control" | "automation_save" | "automation_config"
             | "set_profile" | "save_profile" | "select_profile" | "display_settings"
             | "mcp_settings_save" => "configure",
@@ -184,11 +186,31 @@ impl Runtime {
                 } else {
                     None
                 };
-                Ok(json!(e.enqueue(
+                let password = p
+                    .get("password")
+                    .filter(|v| !v.is_null())
+                    .map(|v| v.as_str().context("password must be a string"))
+                    .transpose()?;
+                Ok(json!(e.enqueue_with_password(
                     paths,
                     p["recursive"].as_bool().unwrap_or(false),
-                    profile
+                    profile,
+                    password
                 )?))
+            }
+            "receive_password" => {
+                let transfer = p
+                    .get("id")
+                    .filter(|v| !v.is_null())
+                    .map(|_| id())
+                    .transpose()?;
+                let password = p
+                    .get("password")
+                    .filter(|v| !v.is_null())
+                    .map(|v| v.as_str().context("password must be a string"))
+                    .transpose()?;
+                e.set_receive_password(transfer, password)?;
+                Ok(json!({"ok":true}))
             }
             "action" => {
                 e.change_job(

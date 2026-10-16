@@ -11,7 +11,8 @@ data class TransferFile(
 )
 data class Transfer(
     val id: String, val direction: String, val status: String, val files: List<TransferFile>,
-    val cycles: Long, val frames: Long, val error: String?, val bytesPerSecond: Double, val created: Long
+    val cycles: Long, val frames: Long, val error: String?, val bytesPerSecond: Double, val created: Long,
+    val passwordNeeded: Boolean = false, val passwordBundle: Boolean = false
 ) {
     val totalBytes get() = files.sumOf { it.size }
     val progress: Float get() = if (totalBytes == 0L) {
@@ -29,6 +30,7 @@ data class Transfer(
         "acknowledged" -> "Receipt claim · untrusted"
         "displayed" -> "Loop shown · delivery unconfirmed"
         "active" -> if (direction == "receive") "Receiving" else "Queued for display"
+        "locked" -> "Received · password required"
         else -> status.replaceFirstChar { it.uppercase() }
     }
 }
@@ -42,7 +44,9 @@ data class AppState(
     val transfers: List<Transfer> = emptyList(), val busy: Boolean = false, val busyLabel: String = "",
     val error: String? = null, val message: String? = null,
     val displaying: Boolean = false, val scanning: Boolean = false, val frontCamera: Boolean = false,
-    val frame: QrFrame? = null, val lastScanIssue: String? = null, val accepted: Long = 0, val rejected: Long = 0
+    val frame: QrFrame? = null, val lastScanIssue: String? = null, val accepted: Long = 0, val rejected: Long = 0,
+    // In-memory only; never placed in saved instance state or preferences.
+    val encryptSend: Boolean = false, val sendPassword: String = ""
 )
 
 fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
@@ -67,7 +71,8 @@ fun parseSnapshot(json: JSONObject, previous: AppState): AppState {
                     )
                 }, job.getLong("cycles"), job.getLong("frames"),
                 if (job.isNull("error")) null else job.getString("error"),
-                job.optDouble("bytesPerSecond", 0.0), job.getLong("created")
+                job.optDouble("bytesPerSecond", 0.0), job.getLong("created"),
+                job.optBoolean("passwordNeeded"), job.optBoolean("passwordBundle")
             )
         }.sortedByDescending { it.created }
     )

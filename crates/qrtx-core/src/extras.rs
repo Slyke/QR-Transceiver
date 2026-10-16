@@ -118,7 +118,7 @@ impl Engine {
                     self.request_missing(j.id, file.id)?;
                 }
             }
-            if j.direction == "send" && j.status == "active" {
+            if j.direction == "send" && j.status == "active" && !j.password_bundle {
                 let stamp = self.source_stamp(&j)?;
                 let previous = self.setting(&format!("sources:{}", j.id))?;
                 if previous.as_deref() != Some(&stamp) {
